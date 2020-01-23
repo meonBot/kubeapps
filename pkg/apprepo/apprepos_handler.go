@@ -22,8 +22,10 @@ import (
 	"net/http"
 
 	log "github.com/sirupsen/logrus"
+	authorizationapi "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
+	authorizationv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	corev1typed "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -41,6 +43,7 @@ import (
 type combinedClientsetInterface interface {
 	KubeappsV1alpha1() v1alpha1typed.KubeappsV1alpha1Interface
 	CoreV1() corev1typed.CoreV1Interface
+	AuthorizationV1() authorizationv1.AuthorizationV1Interface
 }
 
 // Need to use a type alias to embed the two Clientset's without a name clash.
@@ -86,6 +89,10 @@ type appRepositoryRequestDetails struct {
 // appRepositoryResponse is used to marshal the JSON response
 type appRepositoryResponse struct {
 	AppRepository v1alpha1.AppRepository `json:"appRepository"`
+}
+
+type namespacesResponse struct {
+	Namespaces []corev1.Namespace `json:"namespaces"`
 }
 
 // NewAppRepositoriesHandler returns an AppRepositories handler configured with
@@ -280,9 +287,71 @@ func secretForRequest(appRepoRequest appRepositoryRequest, appRepo *v1alpha1.App
 		},
 		StringData: secrets,
 	}
-	return nil
 }
 
 func secretNameForRepo(repoName string) string {
 	return fmt.Sprintf("apprepo-%s-secrets", repoName)
+}
+
+// GetNamespaces return namespaces
+func (a *appRepositoriesHandler) GetNamespaces(w http.ResponseWriter, req *http.Request) {
+	token := auth.ExtractToken(req.Header.Get("Authorization"))
+	userClientset, err := a.clientsetForConfig(a.ConfigForToken(token))
+	if err != nil {
+		log.Errorf("unable to create clientset: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	svcRestConfig, err := rest.InClusterConfig()
+	if err != nil {
+		log.Errorf("Failed to create in-cluster config with service account: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	svcKubeClient, err := kubernetes.NewForConfig(svcRestConfig)
+	if err != nil {
+		log.Errorf("Failed to create kube client with service account: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// TODO: This needs to be done with svc serviceaccount
+	namespaces, err := svcKubeClient.CoreV1().Namespaces().List(metav1.ListOptions{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	allowedNamespaces := []corev1.Namespace{}
+	authCli := userClientset.AuthorizationV1()
+	for _, namespace := range namespaces.Items {
+		res, err := authCli.SelfSubjectAccessReviews().Create(&authorizationapi.SelfSubjectAccessReview{
+			Spec: authorizationapi.SelfSubjectAccessReviewSpec{
+				ResourceAttributes: &authorizationapi.ResourceAttributes{
+					Group:     "",
+					Resource:  "secrets",
+					Verb:      "get",
+					Namespace: namespace.Name,
+				},
+			},
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if res.Status.Allowed {
+			allowedNamespaces = append(allowedNamespaces, namespace)
+		}
+	}
+
+	response := namespacesResponse{
+		Namespaces: allowedNamespaces,
+	}
+	responseBody, err := json.Marshal(response)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Write(responseBody)
 }
