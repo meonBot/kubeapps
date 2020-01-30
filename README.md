@@ -1,6 +1,6 @@
 # <img src="./docs/img/logo.png" width="40" align="left"> Kubeapps
 
-[![CircleCI](https://circleci.com/gh/kubeapps/kubeapps/tree/master.svg?style=svg)](https://circleci.com/gh/kubeapps/kubeapps/tree/master)
+[![CircleCI](https://circleci.com/gh/kubeapps/kubeapps/tree/master.svg?style=svg)](https://circleci.com/gh/kubeapps/kubeapps/tree/master) [![Greenkeeper badge](https://badges.greenkeeper.io/meonBot/kubeapps.svg)](https://greenkeeper.io/)
 
 Kubeapps is a web-based UI for deploying and managing applications in Kubernetes clusters. Kubeapps allows you to:
 
